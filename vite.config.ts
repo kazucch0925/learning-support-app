@@ -13,4 +13,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     },
   },
+  // ClerkのためのCORS設定
+  server: {
+    port: 3000,
+    cors: true,
+  },
+  // 環境変数プレフィックスをVITEにする
+  envPrefix: 'VITE_',
 });
