@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useState, useEffect, useCallback } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
+import { toast } from 'react-hot-toast';
 
 export interface Notification {
   id: string;
+  user_id: string;
   title: string;
   message: string;
   type: string;
@@ -13,112 +15,121 @@ export interface Notification {
 }
 
 export function useNotifications() {
-  const { user } = useAuth();
+  const { user: clerkUser, isLoaded: isClerkLoaded } = useUser();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!user) return;
-
-    const subscription = supabase
-      .channel('notifications')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('Received Realtime payload:', payload);
-          const newNotification = payload.new as Notification;
-          console.log('Attempting to add notification:', newNotification);
-          setNotifications(prevNotifications => {
-            const updatedNotifications = [newNotification, ...prevNotifications];
-            console.log('Updated notifications state:', updatedNotifications);
-            return updatedNotifications;
-          });
-          setUnreadCount(prevCount => prevCount + 1);
-        }
-      )
-      .subscribe();
-
-    fetchNotifications();
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [user]);
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
+    setError(null);
     try {
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('notifications')
         .select('*')
-        .eq('user_id', user?.id)
         .order('created_at', { ascending: false })
         .limit(50);
 
-      if (error) throw error;
+      if (fetchError) throw fetchError;
 
-      setNotifications(data || []);
-      setUnreadCount(data?.filter(n => !n.is_read).length || 0);
-      setError(null);
+      const fetchedNotifications = data || [];
+      setNotifications(fetchedNotifications);
+      setUnreadCount(fetchedNotifications.filter(n => !n.is_read).length);
+
     } catch (e) {
+      console.error("Error fetching notifications:", e);
       setError(e instanceof Error ? e.message : '通知の取得に失敗しました');
+      toast.error('通知の取得に失敗しました');
     } finally {
+      // setLoading は useEffect で管理
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!isClerkLoaded) {
+      setLoading(true);
+      return;
+    }
+    if (clerkUser) {
+        setLoading(true);
+        fetchNotifications().finally(() => setLoading(false));
+    }
+    else {
+      setNotifications([]);
+      setUnreadCount(0);
+      setError(null);
       setLoading(false);
     }
-  };
+  }, [isClerkLoaded, clerkUser, fetchNotifications]);
 
-  const markAsRead = async (notificationId: string) => {
+  const markAsRead = useCallback(async (notificationId: string) => {
+    setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notificationId);
-
       if (error) throw error;
-      await fetchNotifications();
+      setNotifications(prev =>
+          prev.map(n => n.id === notificationId ? { ...n, is_read: true } : n)
+      );
+      setUnreadCount(prev => Math.max(0, prev - 1));
+      toast.success('通知を既読にしました');
     } catch (e) {
+      console.error("Error marking notification as read:", e);
       setError(e instanceof Error ? e.message : '通知の更新に失敗しました');
+      toast.error('通知の更新に失敗しました');
       throw e;
+    } finally {
+        setLoading(false);
     }
-  };
+  }, [supabase]);
 
-  const markAllAsRead = async () => {
+  const markAllAsRead = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
-        .eq('user_id', user?.id)
         .eq('is_read', false);
-
       if (error) throw error;
-      await fetchNotifications();
+      setNotifications(prev =>
+          prev.map(n => n.is_read ? n : { ...n, is_read: true })
+      );
+      setUnreadCount(0);
+      toast.success('すべての通知を既読にしました');
     } catch (e) {
+      console.error("Error marking all notifications as read:", e);
       setError(e instanceof Error ? e.message : '通知の更新に失敗しました');
+      toast.error('通知の一括既読に失敗しました');
       throw e;
+    } finally {
+        setLoading(false);
     }
-  };
+  }, [supabase]);
 
-  const deleteNotification = async (notificationId: string) => {
+  const deleteNotification = useCallback(async (notificationId: string) => {
+    setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase
         .from('notifications')
         .delete()
         .eq('id', notificationId);
-
       if (error) throw error;
-      await fetchNotifications();
+      await fetchNotifications(); // 再フェッチして状態を更新
+      toast.success('通知を削除しました');
     } catch (e) {
+      console.error("Error deleting notification:", e);
       setError(e instanceof Error ? e.message : '通知の削除に失敗しました');
+      toast.error('通知の削除に失敗しました');
       throw e;
+    } finally {
+        setLoading(false);
     }
-  };
+  }, [supabase, fetchNotifications]);
 
   return {
     notifications,

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../../lib/supabase'; // Adjust path as needed
-import { useAuth } from '../../contexts/AuthContext'; // Adjust path as needed
+import { useUser } from '@clerk/clerk-react'; // Clerk認証を使用
 import toast from 'react-hot-toast';
 
 interface DailyBonusHandlerProps {
@@ -17,7 +17,7 @@ const getTodayJST = (): string => {
 };
 
 function DailyBonusHandler({ refreshUserData }: DailyBonusHandlerProps) {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser(); // Clerkの認証状態を使用
   const [hasProcessed, setHasProcessed] = useState(false); // Avoid multiple calls
   const [lastProcessedDate, setLastProcessedDate] = useState<string>('');
   const checkIntervalRef = useRef<number | null>(null);
@@ -29,7 +29,7 @@ function DailyBonusHandler({ refreshUserData }: DailyBonusHandlerProps) {
   }, [lastProcessedDate]);
 
   const processDailyBonus = useCallback(async (force = false) => {
-    if (!user) return;
+    if (!isLoaded || !user) return;
     if (hasProcessed && !force) return;
 
     const todayJST = getTodayJST();
@@ -75,12 +75,12 @@ function DailyBonusHandler({ refreshUserData }: DailyBonusHandlerProps) {
         // toast.error('ログインボーナスの処理中に予期せぬエラーが発生しました。');
       }
     }
-  }, [user, hasProcessed, lastProcessedDate, refreshUserData]);
+  }, [user, isLoaded, hasProcessed, lastProcessedDate, refreshUserData]);
 
   // 日付変更チェック用のインターバルを設定
   useEffect(() => {
     // 定期的に日付変更をチェック（60秒ごと）
-    if (user) {
+    if (isLoaded && user) {
       // まず現在の日付を記録 - JST基準
       const todayJST = getTodayJST();
       if (!lastProcessedDate) {
@@ -101,16 +101,16 @@ function DailyBonusHandler({ refreshUserData }: DailyBonusHandlerProps) {
         clearInterval(checkIntervalRef.current);
       }
     };
-  }, [user, isNewDay, processDailyBonus, lastProcessedDate]);
+  }, [user, isLoaded, isNewDay, processDailyBonus, lastProcessedDate]);
 
   // 初回レンダリング時のログインボーナス処理
   useEffect(() => {
     // Process bonus once user is loaded and it hasn't been processed in this component instance
-    if (user && !hasProcessed) {
+    if (isLoaded && user && !hasProcessed) {
       processDailyBonus();
     }
     // Dependency array ensures this runs when user loads or processDailyBonus changes
-  }, [user, hasProcessed, processDailyBonus]);
+  }, [user, isLoaded, hasProcessed, processDailyBonus]);
 
   // This component now renders nothing, it just handles the logic
   return null;

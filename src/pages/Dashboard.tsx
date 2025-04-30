@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, BookOpen, Users, Flame, Sparkles, Lightbulb, InfoIcon, Edit } from 'lucide-react';
+import { useUser } from '@clerk/clerk-react';
 import Button from '../components/ui/Button';
 import Card, { CardContent } from '../components/ui/Card';
 import GoalCard from '../components/GoalCard';
@@ -10,7 +11,6 @@ import LogSessionForm from '../components/LogSessionForm';
 import Modal from '../components/ui/Modal';
 import Tooltip from '../components/ui/Tooltip';
 import { useGoals } from '../hooks/useGoals';
-import { useAuth } from '../contexts/AuthContext';
 import { useLearningSession } from '../hooks/useLearningSession';
 import { useReminders } from '../hooks/useReminders';
 import { useUserData } from '../hooks/useUserData';
@@ -31,7 +31,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const { userData, loading: userDataLoading, updateUserData, refreshUserData } = useUserData();
   const { goals, loading, addGoal, updateGoal, deleteGoal, refreshGoals, restartGoal } = useGoals();
   const { logSession } = useLearningSession();
@@ -223,7 +223,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     }
   };
 
-  if (loading || userDataLoading || !user) {
+  if (loading || userDataLoading || !isLoaded) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">

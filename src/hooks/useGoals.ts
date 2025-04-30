@@ -1,43 +1,34 @@
-import { useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useEffect, useState, useCallback } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
-import { useAiAssistant } from './useAiAssistant'; // suggestions取得用に必要になる可能性
+import { useAiAssistant } from './useAiAssistant';
+import { toast } from 'react-hot-toast';
 
 type Goal = Database['public']['Tables']['goals']['Row'];
 type NewGoal = Database['public']['Tables']['goals']['Insert'];
 
-// ai_suggestions テーブルに書き込むための共通関数 (仮)
-// 本来は useAiAssistant フックの責務かもしれないが、依存回避のためここに定義
-// useAiAssistant フックをインポートして使う方が良い可能性もある
+// userId は Clerk ユーザー ID (string) を想定するように変更
 const createManualAdjustmentSuggestion = async (
-  userId: string | undefined,
+  userId: string, // Clerk User ID
   goalId: string,
   oldTarget: number,
   newTarget: number
 ) => {
-  if (!userId) return;
-
-  const type = newTarget > oldTarget ? 'increase' : 'decrease';
-  const title = type === 'increase' 
-    ? '学習目標を手動で引き上げ' 
-    : '学習目標を手動で調整';
-  
-  const description = type === 'increase'
-    ? `目標時間を手動で ${oldTarget}分から ${newTarget}分に引き上げました。`
-    : `目標時間を手動で ${oldTarget}分から ${newTarget}分に調整しました。`;
-  
-  // 有効期限を短めに設定（例: 3日間）手動変更はすぐ確認される想定
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 3);
-  
+  if (!userId) {
+    console.error('createManualAdjustmentSuggestion: userId is missing');
+    return;
+  }
+  // ... (suggestionData の user_id も Clerk ID になるが、ai_suggestions テーブルのRLS/カラム型に依存)
+  // ai_suggestionsテーブルのuser_idもClerk ID (text) を想定する
   const suggestionData = {
-    user_id: userId,
+    user_id: userId, // Clerk User ID を使用
     goal_id: goalId,
-    title,
-    description,
+    // ... 他のフィールド
+    title: newTarget > oldTarget ? '学習目標を手動で引き上げ' : '学習目標を手動で調整',
+    description: newTarget > oldTarget ? `目標時間を手動で ${oldTarget}分から ${newTarget}分に引き上げました。` : `目標時間を手動で ${oldTarget}分から ${newTarget}分に調整しました。`,
     type: 'manual_adjustment',
-    expires_at: expiresAt.toISOString(),
+    expires_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // 3日後
     is_applied: false
   };
 
@@ -46,72 +37,93 @@ const createManualAdjustmentSuggestion = async (
       .from('ai_suggestions')
       .insert([suggestionData]);
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
   } catch (error) {
-    console.error('手動調整提案の作成中に予期せぬエラー:', error);
+    console.error('手動調整提案の作成中にエラー:', error);
+    toast.error('提案の作成中にエラーが発生しました');
   }
 };
 
 export function useGoals() {
-  const { user } = useAuth();
+  const { user: clerkUser, isLoaded: isClerkLoaded } = useUser();
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchGoals = async () => {
-    if (!user) return;
-    
+  const fetchGoals = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('goals')
         .select('*')
-        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setGoals(data);
+      if (fetchError) throw fetchError;
+      setGoals(data || []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '予期せぬエラーが発生しました');
+      console.error('Error fetching goals:', e);
+      setError(e instanceof Error ? e.message : 'ゴールの取得中にエラーが発生しました');
+      toast.error('ゴールの取得に失敗しました');
     } finally {
-      setLoading(false);
     }
-  };
+  }, [supabase]);
 
   useEffect(() => {
-    if (!user) {
-      setGoals([]);
-      setLoading(false);
+    if (!isClerkLoaded) {
+      setLoading(true);
       return;
     }
+    if (clerkUser) {
+        setLoading(true);
+        fetchGoals().finally(() => setLoading(false));
+    } else {
+        setGoals([]);
+        setError(null);
+        setLoading(false);
+    }
+  }, [isClerkLoaded, clerkUser, fetchGoals]);
 
-    fetchGoals();
-  }, [user]);
-
-  const addGoal = async (goal: Partial<Goal>) => {
-    if (!user) return;
-
+  const addGoal = useCallback(async (goalData: { title: string } & Partial<Omit<Goal, 'id' | 'user_id' | 'created_at' | 'updated_at' | 'title'>>) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return null;
+    }
+    setLoading(true);
     try {
+      const newGoalData = {
+        ...goalData,
+      };
+
       const { data, error } = await supabase
         .from('goals')
-        .insert([{ ...goal, user_id: user.id }])
+        .insert(newGoalData)
         .select()
         .single();
 
       if (error) throw error;
       setGoals(prev => [data, ...prev]);
+      toast.success('ゴールを作成しました');
       return data;
     } catch (e) {
+      console.error('Error adding goal:', e);
       setError(e instanceof Error ? e.message : 'ゴールの作成に失敗しました');
+      toast.error('ゴールの作成に失敗しました');
       throw e;
+    } finally {
+        setLoading(false);
     }
-  };
+  }, [supabase, clerkUser]);
 
-  const updateGoal = async (goalId: string, updates: Partial<Goal>) => {
-    if (!user) return;
+  const updateGoal = useCallback(async (goalId: string, updates: Partial<Omit<Goal, 'id' | 'user_id' | 'created_at' | 'updated_at'>>) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return null;
+    }
+    const clerkUserId = clerkUser.id;
+
+    setLoading(true);
     try {
-      // 1. 更新前の目標データを取得
       const { data: currentGoal, error: fetchError } = await supabase
         .from('goals')
         .select('target_minutes_per_day')
@@ -119,12 +131,11 @@ export function useGoals() {
         .single();
 
       if (fetchError) {
-        console.error('更新前の目標取得エラー:', fetchError);
-        // エラーでも続行
+          console.error('更新前の目標取得エラー:', fetchError);
+          throw fetchError;
       }
       const oldTarget = currentGoal?.target_minutes_per_day;
 
-      // 2. 目標データを更新
       const { data: updatedGoal, error: updateError } = await supabase
         .from('goals')
         .update(updates)
@@ -134,99 +145,62 @@ export function useGoals() {
 
       if (updateError) throw updateError;
 
-      // 3. target_minutes_per_day が変更されていたら通知レコードを作成し、完了を待つ
       const newTarget = updatedGoal.target_minutes_per_day;
       if (oldTarget !== undefined && newTarget !== undefined && oldTarget !== newTarget) {
         try {
-          await createManualAdjustmentSuggestion(user?.id, goalId, oldTarget, newTarget);
+          await createManualAdjustmentSuggestion(clerkUserId, goalId, oldTarget, newTarget);
         } catch (suggestionError) {
-          console.error('[useGoals.updateGoal] Suggestion creation failed, but goal update succeeded.', suggestionError);
+          console.error('[useGoals.updateGoal] Suggestion creation failed:', suggestionError);
         }
       }
 
-      // 4. Stateを更新
       setGoals(prev => prev.map(goal => goal.id === goalId ? updatedGoal : goal));
+      toast.success('ゴールを更新しました');
       return updatedGoal;
     } catch (e) {
+      console.error('Error updating goal:', e);
       setError(e instanceof Error ? e.message : '更新に失敗しました');
+      toast.error('ゴールの更新に失敗しました');
       throw e;
+    } finally {
+        setLoading(false);
     }
-  };
+  }, [supabase, clerkUser]);
 
-  const deleteGoal = async (goalId: string) => {
+  const deleteGoal = useCallback(async (goalId: string) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return;
+    }
+    setLoading(true);
     try {
-      // まず、関連する学習セッションを削除
       const { error: sessionsError } = await supabase
         .from('learning_sessions')
         .delete()
         .eq('goal_id', goalId);
 
-      if (sessionsError) throw sessionsError;
+      if (sessionsError) {
+          console.warn('関連セッションの削除中にエラー:', sessionsError);
+      }
 
-      // 次に、目標を削除
       const { error: goalError } = await supabase
         .from('goals')
         .delete()
         .eq('id', goalId);
 
       if (goalError) throw goalError;
-      
+
       setGoals(prev => prev.filter(goal => goal.id !== goalId));
+      toast.success('ゴールを削除しました');
     } catch (e) {
+      console.error('Error deleting goal:', e);
       setError(e instanceof Error ? e.message : '削除に失敗しました');
+      toast.error('ゴールの削除に失敗しました');
       throw e;
+    } finally {
+        setLoading(false);
     }
-  };
+  }, [supabase, clerkUser]);
 
-  const restartGoal = async (goalId: string) => {
-    try {
-      // 目標の履歴を保存
-      const goal = goals.find(g => g.id === goalId);
-      if (!goal) throw new Error('目標が見つかりません');
-
-      const { error: historyError } = await supabase
-        .from('goal_history')
-        .insert([{
-          goal_id: goalId,
-          user_id: user?.id,
-          previous_streak: goal.streak_days,
-          previous_minutes: goal.current_minutes_per_day,
-          restart_date: new Date().toISOString()
-        }]);
-
-      if (historyError) throw historyError;
-
-      // 目標をリセット
-      const { data, error } = await supabase
-        .from('goals')
-        .update({
-          streak_days: 0,
-          current_minutes_per_day: Math.max(5, Math.floor(goal.target_minutes_per_day * 0.5)),
-          last_completed_at: null
-        })
-        .eq('id', goalId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      setGoals(prev => prev.map(g => g.id === goalId ? data : g));
-      return data;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'リスタートに失敗しました');
-      throw e;
-    }
-  };
-
-  const refreshGoals = () => fetchGoals();
-
-  return {
-    goals,
-    loading,
-    error,
-    addGoal,
-    updateGoal,
-    deleteGoal,
-    restartGoal,
-    refreshGoals
-  };
+  return { goals, loading, error, addGoal, updateGoal, deleteGoal };
 }

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useState, useEffect, useCallback } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
 import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 
 interface Reminder {
   id: string;
@@ -26,19 +27,14 @@ interface AnchoringHabit {
 }
 
 export function useReminders() {
-  const { user } = useAuth();
+  const { user: clerkUser, isLoaded: isClerkLoaded } = useUser();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [anchoringHabits, setAnchoringHabits] = useState<AnchoringHabit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!user) return;
-    fetchReminders();
-    fetchAnchoringHabits();
-  }, [user]);
-
-  const fetchReminders = async () => {
+  const fetchReminders = useCallback(async () => {
+    setError(null);
     try {
       const { data, error } = await supabase
         .from('reminders')
@@ -48,17 +44,20 @@ export function useReminders() {
             title
           )
         `)
-        .eq('user_id', user?.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setReminders(data || []);
     } catch (e) {
+      console.error('リマインダーの取得に失敗しました:', e);
       setError(e instanceof Error ? e.message : 'リマインダーの取得に失敗しました');
+      toast.error('リマインダーの取得に失敗しました');
+    } finally {
     }
-  };
+  }, [supabase]);
 
-  const fetchAnchoringHabits = async () => {
+  const fetchAnchoringHabits = useCallback(async () => {
+    setError(null);
     try {
       const { data, error } = await supabase
         .from('anchoring_habits')
@@ -68,24 +67,49 @@ export function useReminders() {
             title
           )
         `)
-        .eq('user_id', user?.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setAnchoringHabits(data || []);
     } catch (e) {
+      console.error('習慣アンカリングの取得に失敗しました:', e);
       setError(e instanceof Error ? e.message : '習慣アンカリングの取得に失敗しました');
+      toast.error('習慣アンカリングの取得に失敗しました');
     } finally {
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!isClerkLoaded) {
+      setLoading(true);
+      return;
+    }
+    if (clerkUser) {
+      setLoading(true);
+      Promise.all([fetchReminders(), fetchAnchoringHabits()])
+        .catch((err) => {
+            console.error("Error during initial fetch:", err);
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setReminders([]);
+      setAnchoringHabits([]);
+      setError(null);
       setLoading(false);
     }
-  };
+  }, [isClerkLoaded, clerkUser, fetchReminders, fetchAnchoringHabits]);
 
-  const createReminder = async (goalId: string, reminderTime: string, daysOfWeek: number[]) => {
+  const createReminder = useCallback(async (goalId: string, reminderTime: string, daysOfWeek: number[]) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return null;
+    }
+    setLoading(true);
+    setError(null);
     try {
       const { data, error } = await supabase
         .from('reminders')
         .insert([{
-          user_id: user?.id,
           goal_id: goalId,
           reminder_time: reminderTime,
           days_of_week: daysOfWeek,
@@ -100,25 +124,35 @@ export function useReminders() {
         .single();
 
       if (error) throw error;
-      setReminders(prev => [data, ...prev]);
+      await fetchReminders();
+      toast.success('リマインダーを作成しました');
       return data;
     } catch (e) {
+      console.error('リマインダーの作成に失敗しました:', e);
       setError(e instanceof Error ? e.message : 'リマインダーの作成に失敗しました');
+      toast.error('リマインダーの作成に失敗しました');
       throw e;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [fetchReminders, clerkUser]);
 
-  const createAnchoringHabit = async (
+  const createAnchoringHabit = useCallback(async (
     goalId: string,
     existingHabit: string,
     triggerTime?: string | null,
     notes?: string
   ) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return null;
+    }
+    setLoading(true);
+    setError(null);
     try {
       const { data, error } = await supabase
         .from('anchoring_habits')
         .insert([{
-          user_id: user?.id,
           goal_id: goalId,
           existing_habit: existingHabit,
           trigger_time: triggerTime,
@@ -133,15 +167,26 @@ export function useReminders() {
         .single();
 
       if (error) throw error;
-      setAnchoringHabits(prev => [data, ...prev]);
+      await fetchAnchoringHabits();
+      toast.success('習慣アンカリングを作成しました');
       return data;
     } catch (e) {
+      console.error('習慣アンカリングの作成に失敗しました:', e);
       setError(e instanceof Error ? e.message : '習慣アンカリングの作成に失敗しました');
+      toast.error('習慣アンカリングの作成に失敗しました');
       throw e;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [fetchAnchoringHabits, clerkUser]);
 
-  const updateReminder = async (id: string, updates: Partial<Reminder>) => {
+  const updateReminder = useCallback(async (id: string, updates: Partial<Omit<Reminder, 'id' | 'goal_id' | 'goal'>>) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return null;
+    }
+    setLoading(true);
+    setError(null);
     try {
       const { data, error } = await supabase
         .from('reminders')
@@ -156,15 +201,60 @@ export function useReminders() {
         .single();
 
       if (error) throw error;
-      setReminders(prev => prev.map(r => r.id === id ? data : r));
+      await fetchReminders();
+      toast.success('リマインダーを更新しました');
       return data;
     } catch (e) {
+      console.error('リマインダーの更新に失敗しました:', e);
       setError(e instanceof Error ? e.message : 'リマインダーの更新に失敗しました');
+      toast.error('リマインダーの更新に失敗しました');
       throw e;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [fetchReminders, clerkUser]);
 
-  const deleteReminder = async (id: string) => {
+  const updateAnchoringHabit = useCallback(async (id: string, updates: Partial<Omit<AnchoringHabit, 'id' | 'goal_id' | 'goal'>>) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return null;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error } = await supabase
+        .from('anchoring_habits')
+        .update(updates)
+        .eq('id', id)
+        .select(`
+          *,
+          goal:goals (
+            title
+          )
+        `)
+        .single();
+
+      if (error) throw error;
+      await fetchAnchoringHabits();
+      toast.success('習慣アンカリングを更新しました');
+      return data;
+    } catch (e) {
+      console.error('習慣アンカリングの更新に失敗しました:', e);
+      setError(e instanceof Error ? e.message : '習慣アンカリングの更新に失敗しました');
+      toast.error('習慣アンカリングの更新に失敗しました');
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchAnchoringHabits, clerkUser]);
+
+  const deleteReminder = useCallback(async (id: string) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return;
+    }
+    setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase
         .from('reminders')
@@ -172,14 +262,25 @@ export function useReminders() {
         .eq('id', id);
 
       if (error) throw error;
-      setReminders(prev => prev.filter(r => r.id !== id));
+      await fetchReminders();
+      toast.success('リマインダーを削除しました');
     } catch (e) {
+      console.error('リマインダーの削除に失敗しました:', e);
       setError(e instanceof Error ? e.message : 'リマインダーの削除に失敗しました');
+      toast.error('リマインダーの削除に失敗しました');
       throw e;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [fetchReminders, clerkUser]);
 
-  const deleteAnchoringHabit = async (id: string) => {
+  const deleteAnchoringHabit = useCallback(async (id: string) => {
+    if (!clerkUser) {
+        toast.error('ログインしていません。');
+        return;
+    }
+    setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase
         .from('anchoring_habits')
@@ -187,12 +288,17 @@ export function useReminders() {
         .eq('id', id);
 
       if (error) throw error;
-      setAnchoringHabits(prev => prev.filter(h => h.id !== id));
+      await fetchAnchoringHabits();
+      toast.success('習慣アンカリングを削除しました');
     } catch (e) {
+      console.error('習慣アンカリングの削除に失敗しました:', e);
       setError(e instanceof Error ? e.message : '習慣アンカリングの削除に失敗しました');
+      toast.error('習慣アンカリングの削除に失敗しました');
       throw e;
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [fetchAnchoringHabits, clerkUser]);
 
   return {
     reminders,
@@ -202,9 +308,8 @@ export function useReminders() {
     createReminder,
     createAnchoringHabit,
     updateReminder,
+    updateAnchoringHabit,
     deleteReminder,
-    deleteAnchoringHabit,
-    refreshReminders: fetchReminders,
-    refreshAnchoringHabits: fetchAnchoringHabits,
+    deleteAnchoringHabit
   };
 }

@@ -1,9 +1,7 @@
 import React from 'react';
 import { 
   SignIn, 
-  SignUp, 
-  SignInButton, 
-  SignUpButton 
+  SignUp
 } from '@clerk/clerk-react';
 import Card, { CardHeader, CardTitle, CardContent, CardFooter } from '../ui/Card';
 
@@ -29,9 +27,6 @@ export default function ClerkAuthComponent() {
         <CardContent className="pt-5">
           {mode === 'sign-in' ? (
             <SignIn 
-              routing="path" 
-              path="/sign-in" 
-              signUpUrl="/sign-up"
               appearance={{
                 elements: {
                   card: "shadow-none p-0 border-0",
@@ -51,9 +46,6 @@ export default function ClerkAuthComponent() {
             />
           ) : (
             <SignUp 
-              routing="path" 
-              path="/sign-up" 
-              signInUrl="/sign-in"
               appearance={{
                 elements: {
                   card: "shadow-none p-0 border-0",

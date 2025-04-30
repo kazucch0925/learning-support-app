@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Home, User, LogOut, Bell, Users, Award } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useUser, useClerk } from '@clerk/clerk-react';
 import { useNotifications } from '../../hooks/useNotifications';
 import Button from '../ui/Button';
 import NotificationDropdown from './NotificationDropdown';
@@ -11,7 +11,7 @@ interface NavigationProps {
 }
 
 export default function Navigation({ currentPath, onNavigate }: NavigationProps) {
-  const { signOut } = useAuth();
+  const { signOut } = useClerk();
   const { 
     notifications, 
     unreadCount, 
@@ -46,6 +46,11 @@ export default function Navigation({ currentPath, onNavigate }: NavigationProps)
         }
       });
     }
+  };
+
+  // Clerkからのログアウト処理
+  const handleSignOut = () => {
+    signOut();
   };
 
   return (
@@ -116,7 +121,7 @@ export default function Navigation({ currentPath, onNavigate }: NavigationProps)
             
             <Button 
               variant="ghost" 
-              onClick={signOut}
+              onClick={handleSignOut}
               icon={<LogOut className="h-5 w-5" />}
             >
               ログアウト

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useUser } from '@clerk/clerk-react';
 import { supabase } from '../lib/supabase';
 // Remove Goal type import if not used elsewhere in this file after changes
 // import type { Database } from '../lib/database.types';
@@ -14,13 +14,13 @@ interface LogSessionResult {
 }
 
 export function useLearningSession() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Modify logSession to call the RPC function and support past dates
   const logSession = useCallback(async (goalId: string, finalTotalDuration: number, notes: string = '', date?: Date) => {
-    if (!user) return null; // Return null or indicate failure if no user
+    if (!isLoaded || !user) return null; // Return null or indicate failure if no user
 
     if (finalTotalDuration < 0) {
       setError("学習時間は0分以上である必要があります。");
@@ -31,6 +31,8 @@ export function useLearningSession() {
     setError(null);
 
     try {
+      const userId = user.id;
+      
       // 過去の日付が指定されている場合は、その日付に直接記録
       if (date && !isToday(date)) {
         // 過去の記録の場合、常に新しいセッションを作成
@@ -38,7 +40,7 @@ export function useLearningSession() {
           .from('learning_sessions')
           .insert({
             goal_id: goalId,
-            user_id: user.id,
+            user_id: userId,
             duration: finalTotalDuration,
             notes: notes,
             completed_at: date.toISOString()
@@ -109,7 +111,7 @@ export function useLearningSession() {
     } finally {
       setLoading(false);
     }
-  }, [user]); // Add supabase to dependencies if it's not stable across renders, though it usually is
+  }, [user, isLoaded]); // Add supabase to dependencies if it's not stable across renders, though it usually is
 
   return {
     logSession,
