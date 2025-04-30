@@ -1,0 +1,2 @@
+ALTER TABLE public.goals
+ADD COLUMN max_streak_days INTEGER DEFAULT 0 NOT NULL; 
